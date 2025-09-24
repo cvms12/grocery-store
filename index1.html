@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Demo E-Commerce Store</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body { margin:0; font-family: "Segoe UI", sans-serif; background: #f5f7fa; color: #333; }
+    header { background: linear-gradient(90deg,#4f46e5,#6d28d9); color:white; padding:20px; display:flex; justify-content:space-between; align-items:center; }
+    header h1 { margin:0; font-size:1.5rem; }
+    .cart-btn, .login-btn { background:white; color:#4f46e5; border:none; padding:10px 20px; border-radius:25px; font-weight:bold; cursor:pointer; transition:0.3s; }
+    .cart-btn:hover, .login-btn:hover { background:#ddd; }
+    .products { display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:20px; padding:20px; }
+    .product { background:white; border-radius:15px; box-shadow:0 4px 15px rgba(0,0,0,0.1); overflow:hidden; transition:transform 0.2s; }
+    .product:hover { transform:translateY(-5px); }
+    .product img { width:100%; height:200px; object-fit:cover; }
+    .product h3 { margin:10px; font-size:1.2rem; }
+    .product p { margin:10px; color:#555; }
+    .product button { margin:10px; padding:10px; width:calc(100% - 20px); border:none; background:#4f46e5; color:white; border-radius:10px; cursor:pointer; transition:0.3s; }
+    .product button:hover { background:#6d28d9; }
+    #cartModal { display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.6); justify-content:center; align-items:center; }
+    #cartContent { background:white; padding:20px; border-radius:15px; width:90%; max-width:500px; max-height:80vh; overflow-y:auto; }
+    #cartContent h2 { margin-top:0; }
+    .cart-item { display:flex; justify-content:space-between; margin:10px 0; padding:10px; border-bottom:1px solid #ddd; }
+    .checkout-btn { margin-top:20px; width:100%; padding:12px; background:#16a34a; color:white; border:none; border-radius:10px; cursor:pointer; font-size:1rem; }
+    .checkout-btn:hover { background:#15803d; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>🏡 Household Store</h1>
+  <div>
+    <button class="login-btn" id="loginBtn">Login with Google</button>
+    <button class="cart-btn" onclick="openCart()">🛒 Cart (<span id="cart-count">0</span>)</button>
+  </div>
+</header>
+
+<main class="products" id="product-list"></main>
+
+<!-- Cart Modal -->
+<div id="cartModal">
+  <div id="cartContent">
+    <h2>Your Cart</h2>
+    <div id="cart-items"></div>
+    <h3>Total: $<span id="cart-total">0</span></h3>
+    <button class="checkout-btn" onclick="checkout()">Cash on Delivery</button>
+    <br><br>
+    <button onclick="closeCart()">Close</button>
+  </div>
+</div>
+
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/12.3.0/firebase-app.js";
+  import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/12.3.0/firebase-auth.js";
+  import { getFirestore, collection, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.3.0/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyBDxBlX4ArhkD73knbbSIt3YhQWSKBWLj0",
+    authDomain: "householdstore-73ab3.firebaseapp.com",
+    projectId: "householdstore-73ab3",
+    storageBucket: "householdstore-73ab3.firebasestorage.app",
+    messagingSenderId: "173032240174",
+    appId: "1:173032240174:web:4c3560d3e93527eaa39bbf"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+  const db = getFirestore(app);
+  const provider = new GoogleAuthProvider();
+
+  const loginBtn = document.getElementById("loginBtn");
+  let currentUser = null;
+
+  loginBtn.addEventListener("click", () => {
+    if(currentUser){
+      signOut(auth).then(()=>{
+        alert("Logged out");
+        loginBtn.textContent = "Login with Google";
+        currentUser = null;
+      });
+    } else {
+      signInWithPopup(auth, provider)
+        .then((result) => {
+          currentUser = result.user;
+          alert(`Logged in as ${currentUser.displayName}`);
+          loginBtn.textContent = "Logout";
+        })
+        .catch((error) => {
+          console.error(error);
+          alert("Login failed");
+        });
+    }
+  });
+
+  onAuthStateChanged(auth, (user) => {
+    if(user){
+      currentUser = user;
+      loginBtn.textContent = "Logout";
+    }
+  });
+
+  let products = [];
+  let cart = [];
+
+  // Dynamic CSV loader
+  async function loadProductsFromCSV() {
+    const response = await fetch('products.csv');
+    const text = await response.text();
+    const lines = text.trim().split('\n');
+    const headers = lines.shift().split(',');
+    products = lines.map(line => {
+      const data = line.split(',');
+      const obj = {};
+      headers.forEach((h,i) => obj[h]=isNaN(data[i])?data[i]:Number(data[i]));
+      obj.qty = 0;
+      return obj;
+    });
+    renderProducts();
+  }
+
+  function renderProducts() {
+    const container = document.getElementById("product-list");
+    container.innerHTML = products.map(p => `
+      <div class="product">
+        <img src="${p.img}" alt="${p.name}">
+        <h3>${p.name}</h3>
+        <p>$${p.price}</p>
+        <button onclick="addToCart(${p.id})">Add to Cart</button>
+      </div>
+    `).join('');
+  }
+
+  function addToCart(id) {
+    const item = cart.find(i => i.id === id);
+    if(item) item.qty++;
+    else cart.push({...products.find(p=>p.id===id), qty:1});
+    updateCart();
+  }
+
+  function updateCart() {
+    document.getElementById("cart-count").textContent = cart.reduce((a,b)=>a+b.qty,0);
+    const cartItems = document.getElementById("cart-items");
+    cartItems.innerHTML = cart.map(item => `
+      <div class="cart-item">
+        <span>${item.name} (x${item.qty})</span>
+        <span>$${item.price * item.qty}</span>
+      </div>
+    `).join('');
+    document.getElementById("cart-total").textContent = cart.reduce((a,b)=>a+b.price*b.qty,0);
+  }
+
+  function openCart(){ document.getElementById("cartModal").style.display="flex"; }
+  function closeCart(){ document.getElementById("cartModal").style.display="none"; }
+
+  async function checkout(){
+    if(cart.length === 0){ alert("Cart is empty!"); return; }
+    if(!currentUser){ alert("Please login first to place an order."); return; }
+
+    const order = {
+      userId: currentUser.uid,
+      userName: currentUser.displayName,
+      userEmail: currentUser.email,
+      items: cart,
+      total: cart.reduce((a,b)=>a+b.price*b.qty,0),
+      timestamp: serverTimestamp()
+    };
+
+    try {
+      await addDoc(collection(db, "orders"), order);
+      alert("Thank you! Your Cash on Delivery order has been placed.");
+      cart = [];
+      updateCart();
+      closeCart();
+    } catch(e){
+      console.error(e);
+      alert("Failed to place order. Try again.");
+    }
+  }
+
+  // Initialize
+  loadProductsFromCSV();
+
+  // Expose functions
+  window.addToCart = addToCart;
+  window.openCart = openCart;
+  window.closeCart = closeCart;
+  window.checkout = checkout;
+
+</script>
+</body>
+</html>
